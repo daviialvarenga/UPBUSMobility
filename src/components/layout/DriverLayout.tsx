@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, Outlet } from 'react-router-dom';
-import { Bus, Radio, AlertTriangle, ArrowLeft, Shield } from 'lucide-react';
+import { Bus, Radio, AlertTriangle, ArrowLeft, Shield, User } from 'lucide-react';
 import { Badge } from '@/components/common/Badge';
+import { useAuth } from '@/lib/auth-context';
+import { AuthModal } from '@/components/auth/AuthModal';
 
 export const DriverLayout: React.FC = () => {
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const { roleLabel, role, profile } = useAuth();
   return (
     <div className="min-h-screen flex flex-col bg-slate-900 text-slate-100 pb-16">
       {/* Driver Cockpit Header */}
@@ -27,9 +31,18 @@ export const DriverLayout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setAuthModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-white border border-slate-700"
+              title="Trocar Perfil / Entrar"
+            >
+              <User className="w-3.5 h-3.5 text-brand-400" />
+              <span className="font-semibold">{roleLabel}</span>
+            </button>
+
             <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-xs text-slate-300">
               <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-              <span>GPS: Aguardando sinal</span>
+              <span>GPS: Pronto</span>
             </div>
             <Link
               to="/admin"
@@ -46,6 +59,8 @@ export const DriverLayout: React.FC = () => {
       <main className="flex-1 max-w-4xl w-full mx-auto p-4">
         <Outlet />
       </main>
+
+      <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
     </div>
   );
 };

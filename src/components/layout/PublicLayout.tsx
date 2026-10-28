@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
-import { Bus, MapPin, Clock, ShieldCheck, UserCheck } from 'lucide-react';
+import { Bus, MapPin, Clock, ShieldCheck, UserCheck, Shield } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth-context';
+import { AuthModal } from '@/components/auth/AuthModal';
 
 export const PublicLayout: React.FC = () => {
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const { role, roleLabel, user, profile } = useAuth();
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 pb-20 sm:pb-0">
       {/* Top Header */}
@@ -22,6 +26,16 @@ export const PublicLayout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setAuthModalOpen(true)}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors border border-slate-300"
+              title="Autenticação e Perfis (RBAC)"
+            >
+              <Shield className="w-3.5 h-3.5 text-brand-600" />
+              <span className="hidden sm:inline">Perfil:</span>
+              <span className="font-bold text-brand-700">{roleLabel}</span>
+            </button>
+
             <Link
               to="/motorista"
               className="hidden sm:inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200"
@@ -44,6 +58,8 @@ export const PublicLayout: React.FC = () => {
       <main className="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6">
         <Outlet />
       </main>
+
+      <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
 
       {/* Mobile Bottom Navigation Bar */}
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-slate-200 px-2 py-1 shadow-lg">

@@ -19,12 +19,17 @@ import {
   X,
   ExternalLink,
   ChevronRight,
+  User,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/common/Badge';
+import { useAuth } from '@/lib/auth-context';
+import { AuthModal } from '@/components/auth/AuthModal';
 
 export const AdminLayout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const { role, roleLabel, profile } = useAuth();
   const location = useLocation();
 
   const navigationItems = [
@@ -140,18 +145,37 @@ export const AdminLayout: React.FC = () => {
           })}
         </nav>
 
-        {/* Bottom Switch Links */}
-        <div className="p-3 border-t border-slate-800 space-y-1">
+        {/* Bottom Switch Links & User Profile */}
+        <div className="p-3 border-t border-slate-800 space-y-2">
+          {/* User & Role Badge */}
+          <button
+            onClick={() => setAuthModalOpen(true)}
+            className="w-full flex items-center justify-between p-2 rounded-lg bg-slate-800/80 hover:bg-slate-800 transition-colors border border-slate-700/60 text-left"
+          >
+            <div className="flex items-center gap-2 overflow-hidden">
+              <div className="w-7 h-7 rounded-full bg-brand-600/30 text-brand-400 flex items-center justify-center shrink-0 text-xs font-bold">
+                <User className="w-4 h-4" />
+              </div>
+              <div className="truncate">
+                <div className="text-xs font-semibold text-white truncate">
+                  {profile?.fullName || 'Perfil Ativo'}
+                </div>
+                <div className="text-[10px] text-slate-400">Papel: {roleLabel}</div>
+              </div>
+            </div>
+            <span className="text-[10px] text-brand-400 font-bold ml-1 shrink-0">Trocar</span>
+          </button>
+
           <Link
             to="/"
-            className="flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
             <span>Ver Portal Passageiro</span>
             <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
           </Link>
           <Link
             to="/motorista"
-            className="flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
             <span>Área do Motorista</span>
             <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
@@ -165,6 +189,8 @@ export const AdminLayout: React.FC = () => {
           <Outlet />
         </main>
       </div>
+
+      <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
     </div>
   );
 };
