@@ -262,7 +262,10 @@ export const PassengerMap: React.FC<PassengerMapProps> = ({
             <div><strong>Placa:</strong> ${bus.plate}</div>
             <div><strong>Velocidade:</strong> ${speed} km/h</div>
             <div><strong>Sentido:</strong> ${bus.direction === 'outbound' ? 'Ida' : bus.direction === 'inbound' ? 'Volta' : 'Circular'}</div>
-            <div class="text-[10px] text-slate-400 mt-1">Telemetria GPS real</div>
+            <div class="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
+              <span>GPS em Tempo Real</span>
+              <span>${bus.capturedAt ? new Date(bus.capturedAt).toLocaleTimeString('pt-BR') : 'Sinal Ativo'}</span>
+            </div>
           </div>
         `;
 

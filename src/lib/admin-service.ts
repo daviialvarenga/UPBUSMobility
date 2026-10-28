@@ -168,13 +168,13 @@ export async function fetchCCOTrackingData(): Promise<CCOVehicleTrack[]> {
         status = 'out_of_service';
         label = 'Fora de Serviço';
       } else if (activeTrip) {
-        // Verificar se tem sinal GPS recente (< 15 minutos)
-        if (!pos) {
+        // Verificar se tem sinal GPS recente (< 10 minutos) e coordenadas geodésicas válidas
+        if (!pos || !pos.latitude || !pos.longitude || (pos.latitude === 0 && pos.longitude === 0)) {
           status = 'no_signal';
           label = 'Sem Sinal GPS';
         } else {
           const diffMin = (now - new Date(pos.captured_at).getTime()) / (1000 * 60);
-          if (diffMin > 15) {
+          if (diffMin > 10) {
             status = 'no_signal';
             label = 'Sem Sinal GPS';
           } else {

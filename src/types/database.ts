@@ -714,6 +714,12 @@ export interface Database {
         };
         Returns: string;
       };
+      purge_old_vehicle_positions: {
+        Args: {
+          p_retention_days?: number;
+        };
+        Returns: number;
+      };
     };
     Enums: {
       [_ in never]: never;

@@ -36,6 +36,7 @@ import {
   type DetailedLine,
   type DetailedStop,
 } from '@/lib/passenger-service';
+import { subscribeToRealtimePositions } from '@/lib/realtime-tracking';
 import { addRecentSearch } from '@/lib/favorites';
 import type { BusLine, BusStop, ServiceAlert } from '@/types';
 
@@ -95,7 +96,26 @@ export const PassengerPortal: React.FC = () => {
   useEffect(() => {
     loadInitialData();
 
-    // Atualização periódica de telemetria GPS (a cada 20 segundos)
+    // Inscrição em tempo real no canal do Supabase Realtime para movimentação imediata dos ônibus
+    const unsubscribe = subscribeToRealtimePositions((newPos) => {
+      setBuses((prevBuses) => {
+        return prevBuses.map((bus) => {
+          if (bus.id === newPos.vehicle_id) {
+            return {
+              ...bus,
+              latitude: newPos.latitude,
+              longitude: newPos.longitude,
+              currentSpeedKmh: Number(newPos.speed_kmh),
+              currentHeading: Number(newPos.heading),
+              capturedAt: newPos.captured_at,
+            };
+          }
+          return bus;
+        });
+      });
+    });
+
+    // Atualização periódica de telemetria GPS resiliente (a cada 20 segundos)
     const interval = setInterval(async () => {
       const [updatedBuses, updatedAlerts] = await Promise.all([
         fetchRealtimeBuses(),
@@ -105,7 +125,10 @@ export const PassengerPortal: React.FC = () => {
       setAlerts(updatedAlerts);
     }, 20000);
 
-    return () => clearInterval(interval);
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
   }, []);
 
   // 2. Busca Dinâmica de Linhas e Paradas

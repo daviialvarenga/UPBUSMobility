@@ -4,6 +4,11 @@
  */
 
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import {
+  isTelemetryFresh,
+  isValidCoordinate,
+  calculateRealtimeETA,
+} from '@/lib/realtime-tracking';
 import type {
   BusLine,
   BusStop,
@@ -92,25 +97,18 @@ export function calculateDistanceMeters(
 export function calculateETA(
   distanceMeters: number,
   currentSpeedKmh: number,
-  capturedAt?: string
+  capturedAt?: string,
+  intermediateStopsCount = 0
 ): number | null {
-  if (!distanceMeters || distanceMeters < 0) return null;
+  const result = calculateRealtimeETA({
+    distanceMeters,
+    currentSpeedKmh,
+    capturedAt,
+    hasDefinedRoute: true,
+    intermediateStopsCount,
+  });
 
-  // Se a captura for mais velha que 15 minutos, telemetria expirou
-  if (capturedAt) {
-    const diffMs = Date.now() - new Date(capturedAt).getTime();
-    if (diffMs > 15 * 60 * 1000) return null;
-  }
-
-  // Se a velocidade for plausível em trânsito urbano (entre 5 e 80 km/h)
-  const effectiveSpeedKmh = currentSpeedKmh > 5 ? Math.min(currentSpeedKmh, 60) : 22; // média de tráfego urbano 22km/h
-  const effectiveSpeedMps = (effectiveSpeedKmh * 1000) / 3600;
-
-  // Adiciona tempo de desaceleração e semáforos (+ 2 minutos padrão)
-  const seconds = distanceMeters / effectiveSpeedMps;
-  const minutes = Math.max(1, Math.round(seconds / 60) + 1);
-
-  return minutes;
+  return result.minutes;
 }
 
 /**
@@ -281,39 +279,47 @@ export async function fetchRealtimeBuses(): Promise<
       }
     }
 
-    return vehiclesData.map((v) => {
-      const trip = tripsData.find((t) => t.vehicle_id === v.id);
-      const line = trip ? linesMap.get(trip.line_id) : undefined;
-      const pos = latestPositionsMap.get(v.id);
+    return vehiclesData
+      .map((v) => {
+        const trip = tripsData.find((t) => t.vehicle_id === v.id);
+        const line = trip ? linesMap.get(trip.line_id) : undefined;
+        const pos = latestPositionsMap.get(v.id);
 
-      return {
-        id: v.id,
-        fleetNumber: v.fleet_number,
-        plate: v.plate,
-        model: v.model,
-        brand: v.brand,
-        year: v.year,
-        capacity: v.capacity,
-        capacitySeated: v.capacity_seated,
-        capacityStanding: v.capacity_standing,
-        type: v.type as any,
-        operationalStatus: v.operational_status,
-        gpsDeviceId: v.gps_device_id || undefined,
-        currentLineId: v.current_line_id || undefined,
-        hasWifi: v.has_wifi,
-        hasAirConditioning: v.has_air_conditioning,
-        hasAccessibility: v.has_accessibility,
-        lineCode: line?.code,
-        lineName: line?.name,
-        lineColor: line?.color_hex,
-        direction: trip?.direction,
-        currentSpeedKmh: pos ? Number(pos.speed_kmh) : 0,
-        currentHeading: pos ? Number(pos.heading) : 0,
-        latitude: pos ? pos.latitude : undefined,
-        longitude: pos ? pos.longitude : undefined,
-        capturedAt: pos ? pos.captured_at : undefined,
-      };
-    });
+        // Se não houver telemetria recente ou coordenadas válidas, o ônibus não é exibido como em circulação em tempo real
+        const hasFreshGps =
+          pos &&
+          isTelemetryFresh(pos.captured_at, 10) &&
+          isValidCoordinate(pos.latitude, pos.longitude);
+
+        return {
+          id: v.id,
+          fleetNumber: v.fleet_number,
+          plate: v.plate,
+          model: v.model,
+          brand: v.brand,
+          year: v.year,
+          capacity: v.capacity,
+          capacitySeated: v.capacity_seated,
+          capacityStanding: v.capacity_standing,
+          type: v.type as any,
+          operationalStatus: v.operational_status,
+          gpsDeviceId: v.gps_device_id || undefined,
+          currentLineId: trip?.line_id || v.current_line_id || undefined,
+          hasWifi: v.has_wifi,
+          hasAirConditioning: v.has_air_conditioning,
+          hasAccessibility: v.has_accessibility,
+          lineCode: line?.code,
+          lineName: line?.name,
+          lineColor: line?.color_hex,
+          direction: trip?.direction,
+          currentSpeedKmh: pos ? Number(pos.speed_kmh) : 0,
+          currentHeading: pos ? Number(pos.heading) : 0,
+          latitude: hasFreshGps ? pos.latitude : undefined,
+          longitude: hasFreshGps ? pos.longitude : undefined,
+          capturedAt: hasFreshGps ? pos.captured_at : undefined,
+        };
+      })
+      .filter((bus) => bus.latitude !== undefined && bus.longitude !== undefined);
   } catch (err) {
     console.error('Erro na busca de ônibus em tempo real:', err);
     return [];

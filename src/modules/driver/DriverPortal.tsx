@@ -33,6 +33,7 @@ import {
   updateDriverOperationalStatus,
   type DriverOperationalData,
 } from '@/lib/driver-service';
+import { TRACKING_CONFIGS, type GPSFrequencyProfile } from '@/lib/realtime-tracking';
 import { DriverCheckInModal } from '@/components/driver/DriverCheckInModal';
 import { DriverIncidentModal } from '@/components/driver/DriverIncidentModal';
 import { DriverFinishTripModal } from '@/components/driver/DriverFinishTripModal';
@@ -56,6 +57,9 @@ export const DriverPortal: React.FC = () => {
   } | null>(null);
 
   // Estados de Telemetria GPS ao Vivo
+  const [gpsProfile, setGpsProfile] = useState<GPSFrequencyProfile>('balanced');
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [lastTransmittedAt, setLastTransmittedAt] = useState<string | null>(null);
   const [currentGps, setCurrentGps] = useState<{
     latitude: number;
     longitude: number;
@@ -121,7 +125,7 @@ export const DriverPortal: React.FC = () => {
         .catch(() => {});
     }
 
-    // Ativar observação GPS do navegador
+    // Ativar observação GPS do navegador com controle de frequência configurável
     if (navigator.geolocation) {
       watchIdRef.current = navigator.geolocation.watchPosition(
         async (position) => {
@@ -144,9 +148,12 @@ export const DriverPortal: React.FC = () => {
             signalStatus: signal,
           });
 
-          // Controle de Frequência (Throttling de 8 segundos para telemetria)
+          // Controle de Frequência Adaptativo (Economia de bateria, precisão e dados)
+          const config = TRACKING_CONFIGS[gpsProfile];
+          const dynamicInterval = speed > 10 ? config.movingIntervalMs : config.stoppedIntervalMs;
+
           const now = Date.now();
-          if (now - lastSentTimeRef.current >= 8000 && activeTrip && activeTrip.vehicleId) {
+          if (now - lastSentTimeRef.current >= dynamicInterval && activeTrip && activeTrip.vehicleId) {
             lastSentTimeRef.current = now;
             try {
               await sendVehiclePositionRpc({
@@ -158,12 +165,24 @@ export const DriverPortal: React.FC = () => {
                 heading,
                 gpsAccuracyMeters: accuracy,
               });
-            } catch (err) {
+              setLastTransmittedAt(new Date().toLocaleTimeString('pt-BR'));
+              setGpsError(null);
+            } catch (err: any) {
               console.warn('Erro ao transmitir telemetria para o backend:', err);
+              setGpsError(err.message || 'Falha na transmissão da posição');
             }
           }
         },
         (error) => {
+          let errorMsg = 'Sinal GPS indisponível no momento.';
+          if (error.code === error.PERMISSION_DENIED) {
+            errorMsg = 'Permissão de localização negada pelo navegador/sistema.';
+          } else if (error.code === error.POSITION_UNAVAILABLE) {
+            errorMsg = 'Sinal de satélite GPS inacessível ou fraco.';
+          } else if (error.code === error.TIMEOUT) {
+            errorMsg = 'Tempo limite esgotado ao buscar sinal GPS.';
+          }
+          setGpsError(errorMsg);
           setCurrentGps((prev) =>
             prev ? { ...prev, signalStatus: 'lost' } : null
           );
@@ -182,7 +201,7 @@ export const DriverPortal: React.FC = () => {
         wakeLockRef.current = null;
       }
     };
-  }, [isTripInProgress, activeTrip?.id, activeTrip?.vehicleId]);
+  }, [isTripInProgress, activeTrip?.id, activeTrip?.vehicleId, gpsProfile]);
 
   // 3. Ações Operacionais
   const handleStartTrip = async (tripId: string, shiftType: string) => {
@@ -422,6 +441,65 @@ export const DriverPortal: React.FC = () => {
                 {activeTrip.line?.destination || 'Destino'}
               </div>
             </div>
+          </div>
+
+          {/* Status da Transmissão e Seletor de Frequência */}
+          <div className="p-3 bg-slate-900/80 border border-slate-700 rounded-xl space-y-2 text-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                <span className="text-slate-300 font-medium">
+                  {lastTransmittedAt
+                    ? `Telemetria ativa (Último envio: ${lastTransmittedAt})`
+                    : 'Aguardando primeira transmissão...'}
+                </span>
+              </div>
+
+              {/* Seletor de Perfil de Frequência GPS */}
+              <div className="flex items-center gap-1 text-[11px]">
+                <span className="text-slate-400 mr-1">Frequência:</span>
+                <button
+                  type="button"
+                  onClick={() => setGpsProfile('high_precision')}
+                  className={`px-2 py-0.5 rounded transition-all ${
+                    gpsProfile === 'high_precision'
+                      ? 'bg-brand-600 text-white font-bold'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Alta (4s)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGpsProfile('balanced')}
+                  className={`px-2 py-0.5 rounded transition-all ${
+                    gpsProfile === 'balanced'
+                      ? 'bg-brand-600 text-white font-bold'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Padrão (7s)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGpsProfile('battery_saver')}
+                  className={`px-2 py-0.5 rounded transition-all ${
+                    gpsProfile === 'battery_saver'
+                      ? 'bg-brand-600 text-white font-bold'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Economia (12s)
+                </button>
+              </div>
+            </div>
+
+            {gpsError && (
+              <div className="p-2 bg-rose-950/60 border border-rose-800/80 rounded-lg text-rose-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{gpsError}</span>
+              </div>
+            )}
           </div>
 
           {/* Sinalização de Limitação de Navegador Web */}

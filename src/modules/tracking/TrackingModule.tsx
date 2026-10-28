@@ -30,6 +30,11 @@ import {
   CCOVehicleTrack,
   CCOVehicleStatus,
 } from '@/lib/admin-service';
+import {
+  subscribeToRealtimePositions,
+  isTelemetryFresh,
+  executeTelemetryPurge,
+} from '@/lib/realtime-tracking';
 
 const MAP_TILE_URL = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
 const MAP_ATTRIBUTION =
@@ -83,6 +88,7 @@ export const TrackingModule: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | CCOVehicleStatus>('all');
   const [selectedTrack, setSelectedTrack] = useState<CCOVehicleTrack | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
+  const [isPurging, setIsPurging] = useState(false);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -103,10 +109,57 @@ export const TrackingModule: React.FC = () => {
 
   useEffect(() => {
     loadTelemetry();
-    // Atualização periódica a cada 20 segundos
+
+    // 1. Inscrição em tempo real via Supabase Realtime (WebSockets)
+    // Atualiza imediatamente a posição dos marcadores sem recarregar a tela
+    const unsubscribe = subscribeToRealtimePositions((newPos) => {
+      setTracks((prevTracks) => {
+        return prevTracks.map((item) => {
+          if (item.vehicle.id === newPos.vehicle_id) {
+            return {
+              ...item,
+              operationalStatusComputed: item.currentTrip ? 'en_route' : item.operationalStatusComputed,
+              statusLabel: item.currentTrip ? 'Em Operação' : item.statusLabel,
+              lastPosition: {
+                latitude: newPos.latitude,
+                longitude: newPos.longitude,
+                speedKmh: Number(newPos.speed_kmh),
+                heading: Number(newPos.heading),
+                gpsAccuracy: newPos.gps_accuracy_meters ? Number(newPos.gps_accuracy_meters) : null,
+                capturedAt: newPos.captured_at,
+              },
+            };
+          }
+          return item;
+        });
+      });
+      setLastRefreshedAt(new Date());
+    });
+
+    // 2. Polling de sincronização de retaguarda a cada 20 segundos
     const interval = setInterval(loadTelemetry, 20000);
-    return () => clearInterval(interval);
+
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
   }, []);
+
+  const handlePurgeTelemetry = async () => {
+    if (!confirm('Deseja executar a rotina LGPD de retenção e limpeza de histórico GPS com mais de 30 dias?')) {
+      return;
+    }
+    setIsPurging(true);
+    try {
+      const count = await executeTelemetryPurge(30);
+      alert(`Purga concluída com sucesso: ${count} registros históricos antigos removidos.`);
+      await loadTelemetry();
+    } catch (err: any) {
+      alert(`Erro na purga: ${err.message || 'Falha na operação'}`);
+    } finally {
+      setIsPurging(false);
+    }
+  };
 
   // Inicializar o Mapa Leaflet
   useEffect(() => {
@@ -258,14 +311,27 @@ export const TrackingModule: React.FC = () => {
       {/* Top Header */}
       <ModuleHeader
         title="Central de Controle Operacional (CCO) — Rastreamento GPS"
-        description="Monitoramento da localização em tempo real da frota autorizada e telemetria operacional."
-        badgeText="CCO Ativo"
-        badgeVariant="info"
+        description="Monitoramento da localização em tempo real da frota autorizada e telemetria operacional com Supabase Realtime."
+        badgeText="Realtime WGS84"
+        badgeVariant="success"
       >
-        <Button variant="outline" size="sm" onClick={loadTelemetry} disabled={isLoading}>
-          <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isLoading ? 'animate-spin' : ''}`} />
-          Atualizar Sinais
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handlePurgeTelemetry}
+            disabled={isPurging}
+            className="text-xs text-slate-600 hover:text-slate-900"
+            title="Limpar telemetria com mais de 30 dias para conformidade com a LGPD"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 mr-1 text-slate-500" />
+            {isPurging ? 'Purgando...' : 'Retenção LGPD'}
+          </Button>
+          <Button variant="outline" size="sm" onClick={loadTelemetry} disabled={isLoading}>
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isLoading ? 'animate-spin' : ''}`} />
+            Atualizar Sinais
+          </Button>
+        </div>
       </ModuleHeader>
 
       {/* Status Bar com Indicadores em Tempo Real */}
