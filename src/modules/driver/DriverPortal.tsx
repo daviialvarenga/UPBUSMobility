@@ -1,292 +1,732 @@
-import React, { useState } from 'react';
-import { Bus, Play, AlertTriangle, Radio, CheckCircle, Navigation, ShieldAlert, Send } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Bus,
+  Play,
+  CheckCircle,
+  Radio,
+  AlertTriangle,
+  Clock,
+  Compass,
+  Navigation,
+  ShieldAlert,
+  UserCheck,
+  Calendar,
+  AlertCircle,
+  Eye,
+  LogOut,
+  Sparkles,
+  Smartphone,
+  Info,
+  X,
+  Route,
+} from 'lucide-react';
 import { Button } from '@/components/common/Button';
 import { Badge } from '@/components/common/Badge';
 import { Card } from '@/components/common/Card';
 import { useAuth } from '@/lib/auth-context';
-import { startTripRpc, finishTripRpc, reportIncidentRpc, sendVehiclePositionRpc } from '@/lib/supabase';
+import {
+  fetchDriverOperationalData,
+  startTripRpc,
+  finishTripRpc,
+  sendVehiclePositionRpc,
+  reportIncidentRpc,
+  updateDriverOperationalStatus,
+  type DriverOperationalData,
+} from '@/lib/driver-service';
+import { DriverCheckInModal } from '@/components/driver/DriverCheckInModal';
+import { DriverIncidentModal } from '@/components/driver/DriverIncidentModal';
+import { DriverFinishTripModal } from '@/components/driver/DriverFinishTripModal';
+import type { Trip, Vehicle, BusLine, Incident } from '@/types';
 
 export const DriverPortal: React.FC = () => {
-  const { role, isDriver } = useAuth();
-  const [isShiftActive, setIsShiftActive] = useState(false);
-  const [selectedVehicle, setSelectedVehicle] = useState('V-1045');
-  const [selectedLine, setSelectedLine] = useState('L-501');
-  const [activeTripId, setActiveTripId] = useState<string | null>(null);
-  const [actionFeedback, setActionFeedback] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [gpsSimulatedSpeed, setGpsSimulatedSpeed] = useState(0);
+  const { user, profile, role, isDriver, simulateRole } = useAuth();
 
-  // Modal de reporte de ocorrência
-  const [showIncidentModal, setShowIncidentModal] = useState(false);
-  const [incidentType, setIncidentType] = useState('traffic_delay');
-  const [incidentTitle, setIncidentTitle] = useState('');
-  const [incidentDesc, setIncidentDesc] = useState('');
+  // Estados de Dados Operacionais Reais
+  const [operationalData, setOperationalData] = useState<DriverOperationalData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'trips' | 'vehicles' | 'incidents'>('trips');
 
-  const handleToggleTrip = async () => {
+  // Estados de Modais
+  const [checkInModalOpen, setCheckInModalOpen] = useState(false);
+  const [incidentModalOpen, setIncidentModalOpen] = useState(false);
+  const [finishModalOpen, setFinishModalOpen] = useState(false);
+  const [notificationMsg, setNotificationMsg] = useState<{
+    type: 'success' | 'error' | 'info';
+    text: string;
+  } | null>(null);
+
+  // Estados de Telemetria GPS ao Vivo
+  const [currentGps, setCurrentGps] = useState<{
+    latitude: number;
+    longitude: number;
+    speedKmh: number;
+    heading: number;
+    accuracy: number | null;
+    timestamp: string;
+    signalStatus: 'good' | 'weak' | 'lost';
+  } | null>(null);
+
+  const watchIdRef = useRef<number | null>(null);
+  const lastSentTimeRef = useRef<number>(0);
+  const wakeLockRef = useRef<any>(null);
+
+  // 1. Carregar dados operacionais do motorista
+  const loadData = async () => {
     setLoading(true);
-    setActionFeedback(null);
-
     try {
-      if (!isShiftActive) {
-        // Tentar invocar RPC ou simular início
-        setIsShiftActive(true);
-        setGpsSimulatedSpeed(38);
-        setActionFeedback('Viagem iniciada com sucesso! Telemetria e GPS ativos.');
+      if (user) {
+        const data = await fetchDriverOperationalData(user.id);
+        setOperationalData(data);
       } else {
-        setIsShiftActive(false);
-        setGpsSimulatedSpeed(0);
-        setActionFeedback('Viagem concluída e status operacional sincronizado.');
+        // Modo visitante: carregar dados de motorista padrão para visualização
+        const data = await fetchDriverOperationalData('guest-driver');
+        setOperationalData(data);
       }
-    } catch (err: any) {
-      setActionFeedback(`Erro operacional: ${err.message || 'Falha ao sincronizar'}`);
+    } catch (e) {
+      console.error('Erro ao carregar dados do motorista:', e);
     } finally {
       setLoading(false);
-      setTimeout(() => setActionFeedback(null), 4000);
     }
   };
 
-  const handleReportIncident = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+  useEffect(() => {
+    loadData();
+  }, [user, role]);
+
+  const activeTrip = operationalData?.activeTrip || null;
+  const isTripInProgress = Boolean(activeTrip && activeTrip.status === 'in_progress');
+
+  // 2. Transmissão e Rastreamento GPS durante a viagem
+  useEffect(() => {
+    if (!isTripInProgress) {
+      // Parar transmissão se não houver viagem em andamento
+      if (watchIdRef.current !== null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+      return;
+    }
+
+    // Tentar manter a tela do celular ligada (WakeLock API)
+    if ('wakeLock' in navigator) {
+      (navigator as any).wakeLock
+        .request('screen')
+        .then((lock: any) => {
+          wakeLockRef.current = lock;
+        })
+        .catch(() => {});
+    }
+
+    // Ativar observação GPS do navegador
+    if (navigator.geolocation) {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        async (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          const speed = position.coords.speed !== null ? Math.round(position.coords.speed * 3.6) : 0;
+          const heading = position.coords.heading || 0;
+          const accuracy = position.coords.accuracy || null;
+
+          const signal: 'good' | 'weak' | 'lost' =
+            accuracy && accuracy <= 15 ? 'good' : accuracy && accuracy <= 50 ? 'weak' : 'lost';
+
+          setCurrentGps({
+            latitude: lat,
+            longitude: lng,
+            speedKmh: speed,
+            heading,
+            accuracy,
+            timestamp: new Date().toISOString(),
+            signalStatus: signal,
+          });
+
+          // Controle de Frequência (Throttling de 8 segundos para telemetria)
+          const now = Date.now();
+          if (now - lastSentTimeRef.current >= 8000 && activeTrip && activeTrip.vehicleId) {
+            lastSentTimeRef.current = now;
+            try {
+              await sendVehiclePositionRpc({
+                vehicleId: activeTrip.vehicleId,
+                tripId: activeTrip.id,
+                latitude: lat,
+                longitude: lng,
+                speedKmh: speed,
+                heading,
+                gpsAccuracyMeters: accuracy,
+              });
+            } catch (err) {
+              console.warn('Erro ao transmitir telemetria para o backend:', err);
+            }
+          }
+        },
+        (error) => {
+          setCurrentGps((prev) =>
+            prev ? { ...prev, signalStatus: 'lost' } : null
+          );
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+      );
+    }
+
+    return () => {
+      if (watchIdRef.current !== null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    };
+  }, [isTripInProgress, activeTrip?.id, activeTrip?.vehicleId]);
+
+  // 3. Ações Operacionais
+  const handleStartTrip = async (tripId: string, shiftType: string) => {
     try {
-      // Registrar ocorrência via RPC seguro
-      setActionFeedback('Ocorrência transmitida com sucesso para o CCO!');
-      setShowIncidentModal(false);
-      setIncidentTitle('');
-      setIncidentDesc('');
+      await startTripRpc(tripId);
+      setNotificationMsg({
+        type: 'success',
+        text: 'Check-in realizado e viagem iniciada! Transmissão GPS ativada.',
+      });
+      await loadData();
     } catch (err: any) {
-      setActionFeedback('Erro ao enviar ocorrência.');
-    } finally {
-      setLoading(false);
-      setTimeout(() => setActionFeedback(null), 4000);
+      setNotificationMsg({
+        type: 'error',
+        text: err.message || 'Erro ao iniciar viagem.',
+      });
+      throw err;
     }
   };
+
+  const handleFinishTrip = async (observations: string, finalKm?: string) => {
+    if (!activeTrip) return;
+    try {
+      await finishTripRpc(activeTrip.id);
+      setNotificationMsg({
+        type: 'success',
+        text: 'Viagem finalizada com sucesso! Veículo liberado para a frota.',
+      });
+      setCurrentGps(null);
+      await loadData();
+    } catch (err: any) {
+      setNotificationMsg({
+        type: 'error',
+        text: err.message || 'Erro ao finalizar viagem.',
+      });
+      throw err;
+    }
+  };
+
+  const handleReportIncident = async (params: {
+    incidentType: string;
+    title: string;
+    description: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    photoUrl?: string | null;
+  }) => {
+    try {
+      await reportIncidentRpc({
+        tripId: activeTrip?.id || null,
+        vehicleId: activeTrip?.vehicleId || null,
+        incidentType: params.incidentType,
+        title: params.title,
+        description: params.description,
+        latitude: params.latitude,
+        longitude: params.longitude,
+        locationName: params.latitude ? `${params.latitude.toFixed(4)}, ${params.longitude?.toFixed(4)}` : null,
+      });
+
+      setNotificationMsg({
+        type: 'success',
+        text: 'Ocorrência transmitida com prioridade para a Central CCO.',
+      });
+      await loadData();
+    } catch (err: any) {
+      setNotificationMsg({
+        type: 'error',
+        text: err.message || 'Erro ao enviar ocorrência.',
+      });
+      throw err;
+    }
+  };
+
+  // Se não estiver logado como motorista, exibe tela de identificação / alternador
+  if (!isDriver) {
+    return (
+      <div className="max-w-md mx-auto py-10 space-y-4 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center mx-auto border border-amber-500/30">
+          <UserCheck className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-bold text-white">Identificação do Motorista</h2>
+        <p className="text-xs text-slate-400">
+          Você está navegando com perfil de <strong>{role}</strong>. Para acessar o cockpit operacional, viagens atribuídas e telemetria, autentique-se como motorista.
+        </p>
+        <div className="pt-2">
+          <Button
+            variant="primary"
+            onClick={() => simulateRole('driver')}
+            className="w-full font-bold text-xs py-3"
+          >
+            <Sparkles className="w-4 h-4 mr-1.5" />
+            Entrar como Motorista Credenciado
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const driverName = profile?.fullName || operationalData?.driver.name || 'Motorista UPBUS';
+  const nextTrip = operationalData?.assignedTrips.find((t) => t.status === 'scheduled') || null;
 
   return (
-    <div className="space-y-5">
-      {/* Driver Status Banner */}
-      <div className="bg-slate-800 rounded-2xl p-5 border border-slate-700/80 shadow-md">
+    <div className="space-y-4 pb-12 animate-fade-in text-slate-100">
+      {/* Toast de Notificação */}
+      {notificationMsg && (
+        <div
+          className={`p-3.5 rounded-xl border flex items-center justify-between text-xs animate-slide-in ${
+            notificationMsg.type === 'success'
+              ? 'bg-emerald-950/80 border-emerald-800 text-emerald-200'
+              : notificationMsg.type === 'error'
+              ? 'bg-red-950/80 border-red-800 text-red-200'
+              : 'bg-slate-800 border-slate-700 text-slate-200'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
+            <span>{notificationMsg.text}</span>
+          </div>
+          <button
+            onClick={() => setNotificationMsg(null)}
+            className="text-slate-400 hover:text-white ml-2"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* 1. Banner Principal: Perfil e Status Operacional */}
+      <div className="bg-slate-800 rounded-2xl p-4 sm:p-5 border border-slate-700/80 shadow-md">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-3">
             <div
-              className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg ${
-                isShiftActive ? 'bg-emerald-600 text-white animate-pulse' : 'bg-slate-700 text-slate-300'
+              className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shrink-0 ${
+                isTripInProgress
+                  ? 'bg-emerald-600 text-white animate-pulse'
+                  : 'bg-slate-700 text-slate-300'
               }`}
             >
               <Bus className="w-6 h-6" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-white">Status da Jornada</h2>
-                <Badge variant={isShiftActive ? 'success' : 'default'}>
-                  {isShiftActive ? 'Em Operação' : 'Fora de Serviço'}
+                <h2 className="text-base sm:text-lg font-bold text-white">{driverName}</h2>
+                <Badge variant={isTripInProgress ? 'success' : 'default'}>
+                  {isTripInProgress ? 'Em Condução' : 'Disponível'}
                 </Badge>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                {isShiftActive
-                  ? 'Transmissão de telemetria habilitada (Row Level Security validado)'
-                  : 'Aguardando início de viagem atribuída'}
+                {operationalData?.driver.registrationNumber
+                  ? `Matrícula: ${operationalData.driver.registrationNumber}`
+                  : `CNH: ${operationalData?.driver.licenseNumber || 'Cat. D'}`}{' '}
+                • Escala Operacional UPBUS
               </p>
             </div>
           </div>
 
-          <Button
-            variant={isShiftActive ? 'danger' : 'primary'}
-            size="lg"
-            onClick={handleToggleTrip}
-            disabled={loading}
-            className="w-full sm:w-auto font-bold tracking-wide"
-          >
-            {loading
-              ? 'Processando...'
-              : isShiftActive
-              ? 'Encerrar Viagem'
-              : 'Iniciar Viagem'}
-          </Button>
+          <div className="flex items-center gap-2">
+            {isTripInProgress ? (
+              <Button
+                variant="danger"
+                size="md"
+                onClick={() => setFinishModalOpen(true)}
+                className="w-full sm:w-auto font-bold text-xs tracking-wide shadow-lg"
+              >
+                Concluir Viagem
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => setCheckInModalOpen(true)}
+                className="w-full sm:w-auto font-bold text-xs tracking-wide shadow-lg bg-emerald-600 hover:bg-emerald-700 border-emerald-500"
+              >
+                <Play className="w-3.5 h-3.5 mr-1" />
+                Iniciar Check-in
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 2. Cockpit em Operação: Telemetria GPS e Velocímetro (Quando Viagem Ativa) */}
+      {isTripInProgress && activeTrip && (
+        <Card className="bg-slate-800/90 border-brand-500/80 shadow-xl space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-700/80">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+              <h3 className="font-bold text-sm text-white">
+                Viagem em Andamento — Linha {activeTrip.line?.code || '---'}
+              </h3>
+            </div>
+            <Badge variant="success">Transmissão GPS Ativa</Badge>
+          </div>
+
+          {/* Dados da Viagem Ativa */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+            <div className="bg-slate-900/70 p-3 rounded-xl border border-slate-700/60">
+              <div className="text-[10px] text-slate-400 uppercase font-semibold">Velocidade</div>
+              <div className="text-2xl font-black text-white mt-0.5 font-mono">
+                {currentGps?.speedKmh ?? 0}{' '}
+                <span className="text-xs font-normal text-slate-400">km/h</span>
+              </div>
+            </div>
+
+            <div className="bg-slate-900/70 p-3 rounded-xl border border-slate-700/60">
+              <div className="text-[10px] text-slate-400 uppercase font-semibold">Veículo</div>
+              <div className="text-sm font-bold text-white mt-1">
+                #{activeTrip.vehicle?.fleetNumber}
+              </div>
+              <div className="text-[10px] text-slate-400">{activeTrip.vehicle?.plate}</div>
+            </div>
+
+            <div className="bg-slate-900/70 p-3 rounded-xl border border-slate-700/60">
+              <div className="text-[10px] text-slate-400 uppercase font-semibold">Sinal GPS</div>
+              <div className="text-sm font-bold text-emerald-400 mt-1 flex items-center justify-center gap-1">
+                <Radio className="w-3.5 h-3.5" />
+                {currentGps?.signalStatus === 'good'
+                  ? 'Excelente'
+                  : currentGps?.signalStatus === 'weak'
+                  ? 'Razoável'
+                  : 'Aguardando'}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                {currentGps?.accuracy ? `±${Math.round(currentGps.accuracy)}m` : '--'}
+              </div>
+            </div>
+
+            <div className="bg-slate-900/70 p-3 rounded-xl border border-slate-700/60">
+              <div className="text-[10px] text-slate-400 uppercase font-semibold">Sentido</div>
+              <div className="text-sm font-bold text-brand-400 mt-1">
+                {activeTrip.direction === 'outbound'
+                  ? 'Ida'
+                  : activeTrip.direction === 'inbound'
+                  ? 'Volta'
+                  : 'Circular'}
+              </div>
+              <div className="text-[10px] text-slate-400 truncate">
+                {activeTrip.line?.destination || 'Destino'}
+              </div>
+            </div>
+          </div>
+
+          {/* Sinalização de Limitação de Navegador Web */}
+          <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl text-amber-200 text-xs flex items-start gap-2.5">
+            <Smartphone className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+            <div>
+              <strong className="block text-white font-semibold">
+                Modo Navegador Web Ativo (WakeLock habilitado)
+              </strong>
+              <span>
+                Para manter a telemetria GPS transmitindo sem interrupções pelo sistema operacional móvel, mantenha esta tela aberta durante a rota.
+              </span>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* 3. Próxima Viagem Programada (Quando Não Houver Viagem Ativa) */}
+      {!isTripInProgress && nextTrip && (
+        <Card className="bg-slate-800/80 border-slate-700 text-slate-200">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-700/60 mb-3">
+            <span className="text-xs font-bold text-brand-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5" />
+              Próxima Viagem Atribuída
+            </span>
+            <Badge variant="warning">Aguardando Check-in</Badge>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-xl text-white font-black flex items-center justify-center text-sm shadow"
+                style={{ backgroundColor: nextTrip.line?.colorHex || '#0284c7' }}
+              >
+                {nextTrip.line?.code || 'LINHA'}
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-white">{nextTrip.line?.name}</h4>
+                <div className="text-xs text-slate-400 mt-0.5">
+                  Veículo: Ônibus #{nextTrip.vehicle?.fleetNumber} • Partida prevista:{' '}
+                  <strong>
+                    {new Date(nextTrip.scheduledDeparture).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setCheckInModalOpen(true)}
+              className="w-full sm:w-auto font-bold text-xs"
+            >
+              Fazer Check-in Agora
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* 4. Botão de Ocorrência Rápida em Rota */}
+      <div className="p-4 bg-red-950/40 border border-red-900/60 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-red-900/70 text-red-400 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="font-bold text-sm text-white">Botão de Ocorrência Rápida</h4>
+            <p className="text-xs text-red-300">
+              Trânsito, pane mecânica, acidente, desvio ou problemas na via
+            </p>
+          </div>
         </div>
 
-        {actionFeedback && (
-          <div className="mt-4 p-3 bg-brand-950/60 border border-brand-800/80 rounded-xl text-xs text-brand-300 flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 shrink-0 text-brand-400" />
-            <span>{actionFeedback}</span>
+        <Button
+          variant="danger"
+          size="md"
+          onClick={() => setIncidentModalOpen(true)}
+          className="w-full sm:w-auto font-bold text-xs tracking-wide"
+        >
+          Emitir Ocorrência ao CCO
+        </Button>
+      </div>
+
+      {/* 5. Abas de Controle: Viagens Atribuídas, Veículos e Ocorrências */}
+      <div className="space-y-3">
+        <div className="flex border-b border-slate-800 text-xs font-semibold text-slate-400">
+          <button
+            onClick={() => setActiveTab('trips')}
+            className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
+              activeTab === 'trips'
+                ? 'border-brand-500 text-brand-400 font-bold'
+                : 'border-transparent hover:text-white'
+            }`}
+          >
+            <Route className="w-3.5 h-3.5" />
+            Minhas Viagens ({operationalData?.assignedTrips.length || 0})
+          </button>
+
+          <button
+            onClick={() => setActiveTab('vehicles')}
+            className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
+              activeTab === 'vehicles'
+                ? 'border-brand-500 text-brand-400 font-bold'
+                : 'border-transparent hover:text-white'
+            }`}
+          >
+            <Bus className="w-3.5 h-3.5" />
+            Veículos Autorizados ({operationalData?.authorizedVehicles.length || 0})
+          </button>
+
+          <button
+            onClick={() => setActiveTab('incidents')}
+            className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
+              activeTab === 'incidents'
+                ? 'border-brand-500 text-brand-400 font-bold'
+                : 'border-transparent hover:text-white'
+            }`}
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            Minhas Ocorrências ({operationalData?.reportedIncidents.length || 0})
+          </button>
+        </div>
+
+        {/* Conteúdo da Aba 1: Viagens */}
+        {activeTab === 'trips' && (
+          <div className="space-y-2">
+            {!operationalData || operationalData.assignedTrips.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500 bg-slate-800/40 rounded-2xl border border-slate-800">
+                Nenhuma viagem atribuída à sua escala de condutor no momento.
+              </div>
+            ) : (
+              operationalData.assignedTrips.map((trip) => (
+                <div
+                  key={trip.id}
+                  className="p-3.5 bg-slate-800/80 rounded-xl border border-slate-700/80 flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="px-2.5 py-1 rounded-lg text-white font-extrabold text-xs shadow-sm"
+                      style={{ backgroundColor: trip.line?.colorHex || '#0284c7' }}
+                    >
+                      {trip.line?.code || '---'}
+                    </div>
+                    <div>
+                      <div className="font-bold text-xs text-white">
+                        {trip.line?.name || 'Viagem da escala'}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">
+                        Ônibus #{trip.vehicle?.fleetNumber} • Sentido:{' '}
+                        {trip.direction === 'outbound' ? 'Ida' : 'Volta'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <Badge
+                      variant={
+                        trip.status === 'in_progress'
+                          ? 'success'
+                          : trip.status === 'completed'
+                          ? 'default'
+                          : 'warning'
+                      }
+                    >
+                      {trip.status === 'in_progress'
+                        ? 'Em Andamento'
+                        : trip.status === 'completed'
+                        ? 'Concluída'
+                        : 'Programada'}
+                    </Badge>
+                    <div className="text-[10px] text-slate-400 mt-1">
+                      {new Date(trip.scheduledDeparture).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* Conteúdo da Aba 2: Veículos Autorizados */}
+        {activeTab === 'vehicles' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {!operationalData || operationalData.authorizedVehicles.length === 0 ? (
+              <div className="col-span-2 p-8 text-center text-xs text-slate-500 bg-slate-800/40 rounded-2xl border border-slate-800">
+                Nenhum veículo vinculado à sua escala.
+              </div>
+            ) : (
+              operationalData.authorizedVehicles.map((vehicle) => (
+                <div
+                  key={vehicle.id}
+                  className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/80 flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-slate-700 text-white font-bold flex items-center justify-center text-xs">
+                      #{vehicle.fleetNumber}
+                    </div>
+                    <div>
+                      <div className="font-bold text-xs text-white">
+                        {vehicle.model} ({vehicle.brand})
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Placa: {vehicle.plate} • Cap: {vehicle.capacity} passageiros
+                      </div>
+                    </div>
+                  </div>
+                  <Badge
+                    variant={
+                      vehicle.operationalStatus === 'en_route'
+                        ? 'success'
+                        : vehicle.operationalStatus === 'maintenance'
+                        ? 'danger'
+                        : 'default'
+                    }
+                  >
+                    {vehicle.operationalStatus}
+                  </Badge>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* Conteúdo da Aba 3: Ocorrências */}
+        {activeTab === 'incidents' && (
+          <div className="space-y-2">
+            {!operationalData || operationalData.reportedIncidents.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500 bg-slate-800/40 rounded-2xl border border-slate-800">
+                Nenhuma ocorrência registrada por você até o momento.
+              </div>
+            ) : (
+              operationalData.reportedIncidents.map((incident) => (
+                <div
+                  key={incident.id}
+                  className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/80 space-y-1"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="font-bold text-xs text-white flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                      {incident.title}
+                    </div>
+                    <Badge
+                      variant={
+                        incident.status === 'resolved'
+                          ? 'success'
+                          : incident.status === 'under_investigation'
+                          ? 'warning'
+                          : 'danger'
+                      }
+                    >
+                      {incident.status}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-slate-300">{incident.description}</p>
+                  <div className="text-[10px] text-slate-500 pt-1 flex items-center justify-between">
+                    <span>
+                      {new Date(incident.occurredAt).toLocaleString([], {
+                        day: '2-digit',
+                        month: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                    {incident.resolutionNotes && (
+                      <span className="text-emerald-400">Nota CCO: {incident.resolutionNotes}</span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         )}
       </div>
 
-      {/* Operational Inputs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Card className="bg-slate-800/90 border-slate-700 text-slate-200">
-          <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">
-            Veículo Vinculado
-          </label>
-          <select
-            value={selectedVehicle}
-            onChange={(e) => setSelectedVehicle(e.target.value)}
-            disabled={isShiftActive}
-            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-          >
-            <option value="V-1045">Ônibus #1045 — Mercedes-Benz O500 (ABC-1234)</option>
-            <option value="V-1046">Ônibus #1046 — Scania K280 (DEF-5678)</option>
-            <option value="V-2010">Micro-ônibus #2010 — Volare W9 (GHI-9012)</option>
-          </select>
-          <p className="text-[11px] text-slate-400 mt-2">
-            Validação backend: Apenas veículos ativos e disponíveis podem ser escalados.
-          </p>
-        </Card>
+      {/* Modais Operacionais */}
+      <DriverCheckInModal
+        isOpen={checkInModalOpen}
+        onClose={() => setCheckInModalOpen(false)}
+        assignedTrips={operationalData?.assignedTrips || []}
+        authorizedVehicles={operationalData?.authorizedVehicles || []}
+        hasActiveTrip={isTripInProgress}
+        onStartTrip={handleStartTrip}
+      />
 
-        <Card className="bg-slate-800/90 border-slate-700 text-slate-200">
-          <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">
-            Linha de Operação
-          </label>
-          <select
-            value={selectedLine}
-            onChange={(e) => setSelectedLine(e.target.value)}
-            disabled={isShiftActive}
-            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-          >
-            <option value="L-501">Linha 501 — Terminal Central / Bairro Alto</option>
-            <option value="L-302">Linha 302 — Circular Universitário</option>
-            <option value="L-104">Linha 104 — Rodoviária / Aeroporto</option>
-          </select>
-          <p className="text-[11px] text-slate-400 mt-2">
-            Itinerário e tempos de parada sincronizados com a tabela <code className="text-brand-300">line_stops</code>.
-          </p>
-        </Card>
-      </div>
+      <DriverIncidentModal
+        isOpen={incidentModalOpen}
+        onClose={() => setIncidentModalOpen(false)}
+        activeTripId={activeTrip?.id}
+        activeVehicleId={activeTrip?.vehicleId}
+        currentLocation={currentGps ? { latitude: currentGps.latitude, longitude: currentGps.longitude } : null}
+        onSubmitIncident={handleReportIncident}
+      />
 
-      {/* Telemetry and GPS Status */}
-      <Card className="bg-slate-800/90 border-slate-700 text-slate-200">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-700/80 mb-4">
-          <div className="flex items-center gap-2">
-            <Radio className="w-4 h-4 text-brand-400" />
-            <h3 className="font-semibold text-sm text-white">Dispositivo de Rastreamento GPS</h3>
-          </div>
-          <Badge variant={isShiftActive ? 'success' : 'warning'}>
-            {isShiftActive ? 'Transmitindo Telemetria' : 'Aguardando Início'}
-          </Badge>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-          <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-700/50">
-            <div className="text-[11px] text-slate-400 uppercase">Velocidade</div>
-            <div className="text-lg font-bold text-white mt-0.5">{gpsSimulatedSpeed} km/h</div>
-          </div>
-          <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-700/50">
-            <div className="text-[11px] text-slate-400 uppercase">Sinal GPS</div>
-            <div className={`text-lg font-bold mt-0.5 ${isShiftActive ? 'text-emerald-400' : 'text-amber-400'}`}>
-              {isShiftActive ? 'Fixado (3D)' : 'Standby'}
-            </div>
-          </div>
-          <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-700/50">
-            <div className="text-[11px] text-slate-400 uppercase">Precisão</div>
-            <div className="text-lg font-bold text-white mt-0.5">{isShiftActive ? '± 2.5m' : '--'}</div>
-          </div>
-          <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-700/50">
-            <div className="text-[11px] text-slate-400 uppercase">Próximo Ponto</div>
-            <div className="text-lg font-bold text-brand-400 mt-0.5">{isShiftActive ? 'Ponto #04' : '--'}</div>
-          </div>
-        </div>
-
-        <div className="mt-4 pt-3 border-t border-slate-700/80 flex items-center justify-between text-xs text-slate-400">
-          <span>Telemetria armazenada na tabela <code className="text-brand-300">vehicle_positions</code> com RLS restrito.</span>
-        </div>
-      </Card>
-
-      {/* Quick Action: Report Occurrence */}
-      <Card className="bg-red-950/30 border-red-900/50 text-red-200">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-red-900/60 text-red-400 flex items-center justify-center shrink-0">
-              <AlertTriangle className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="font-semibold text-sm text-white">Reportar Ocorrência em Rota</h4>
-              <p className="text-xs text-red-300">Notificar imediatamente a Central de Controle Operacional (CCO)</p>
-            </div>
-          </div>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => setShowIncidentModal(true)}
-            className="w-full sm:w-auto font-semibold"
-          >
-            Emitir Ocorrência
-          </Button>
-        </div>
-      </Card>
-
-      {/* Modal de Registro de Ocorrência */}
-      {showIncidentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-6 text-white shadow-2xl">
-            <h3 className="text-base font-bold text-white flex items-center gap-2 mb-1">
-              <AlertTriangle className="w-5 h-5 text-amber-400" />
-              Registrar Ocorrência Operacional
-            </h3>
-            <p className="text-xs text-slate-400 mb-4">
-              Enviado à tabela <code className="text-brand-300">incidents</code> e despachado ao CCO.
-            </p>
-
-            <form onSubmit={handleReportIncident} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Tipo de Ocorrência</label>
-                <select
-                  value={incidentType}
-                  onChange={(e) => setIncidentType(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                >
-                  <option value="traffic_delay">Congestionamento / Atraso Excessivo</option>
-                  <option value="mechanical_failure">Falha Mecânica / Pane</option>
-                  <option value="accident">Acidente / Abalroamento</option>
-                  <option value="route_obstruction">Obstrução de Via / Desvio Necessário</option>
-                  <option value="passenger_medical">Atendimento Médico a Passageiro</option>
-                  <option value="security_issue">Problema de Segurança / Desordem</option>
-                  <option value="other">Outro</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Título Resumido</label>
-                <input
-                  type="text"
-                  required
-                  value={incidentTitle}
-                  onChange={(e) => setIncidentTitle(e.target.value)}
-                  placeholder="Ex: Pneu furado na Av. Central"
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Descrição Detalhada</label>
-                <textarea
-                  required
-                  rows={3}
-                  value={incidentDesc}
-                  onChange={(e) => setIncidentDesc(e.target.value)}
-                  placeholder="Informe detalhes do ocorrido, se há feridos ou necessidade de guincho/socorro..."
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowIncidentModal(false)}
-                  className="text-slate-400 hover:text-white"
-                >
-                  Cancelar
-                </Button>
-                <Button type="submit" variant="danger" size="sm" disabled={loading}>
-                  {loading ? 'Transmitindo...' : 'Enviar ao CCO'}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <DriverFinishTripModal
+        isOpen={finishModalOpen}
+        onClose={() => setFinishModalOpen(false)}
+        activeTrip={activeTrip}
+        onConfirmFinish={handleFinishTrip}
+      />
     </div>
   );
 };
