@@ -4,6 +4,7 @@ import { Bus, Radio, AlertTriangle, ArrowLeft, Shield, User } from 'lucide-react
 import { Badge } from '@/components/common/Badge';
 import { useAuth } from '@/lib/auth-context';
 import { AuthModal } from '@/components/auth/AuthModal';
+import { NotificationsDropdown } from '@/components/common/NotificationsDropdown';
 
 export const DriverLayout: React.FC = () => {
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -31,6 +32,8 @@ export const DriverLayout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            <NotificationsDropdown isDark={true} />
+
             <button
               onClick={() => setAuthModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-white border border-slate-700"

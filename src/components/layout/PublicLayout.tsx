@@ -4,6 +4,7 @@ import { Bus, MapPin, Clock, ShieldCheck, UserCheck, Shield } from 'lucide-react
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth-context';
 import { AuthModal } from '@/components/auth/AuthModal';
+import { NotificationsDropdown } from '@/components/common/NotificationsDropdown';
 
 export const PublicLayout: React.FC = () => {
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -26,6 +27,8 @@ export const PublicLayout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            <NotificationsDropdown isDark={false} />
+
             <button
               onClick={() => setAuthModalOpen(true)}
               className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors border border-slate-300"

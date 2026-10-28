@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/common/Badge';
 import { useAuth } from '@/lib/auth-context';
 import { AuthModal } from '@/components/auth/AuthModal';
+import { NotificationsDropdown } from '@/components/common/NotificationsDropdown';
 
 export const AdminLayout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -66,6 +67,7 @@ export const AdminLayout: React.FC = () => {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <NotificationsDropdown isDark={false} />
           <Link
             to="/"
             className="text-xs text-slate-600 hover:text-brand-600 flex items-center gap-1 font-medium bg-slate-50 px-2 py-1 rounded border border-slate-200"
@@ -185,6 +187,30 @@ export const AdminLayout: React.FC = () => {
 
       {/* Main Admin Content Container */}
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        {/* Desktop Top Header Bar */}
+        <header className="hidden md:flex bg-white border-b border-slate-200 px-6 py-2.5 items-center justify-between sticky top-0 z-30 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-900">UPBUS Mobility</span>
+            <span className="text-slate-300">•</span>
+            <span className="text-xs text-slate-500">CCO & Central Operacional</span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <NotificationsDropdown isDark={false} />
+            <button
+              onClick={() => setAuthModalOpen(true)}
+              className="flex items-center gap-2 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 transition-colors text-slate-700 border border-slate-200"
+              title="Trocar Perfil / Entrar"
+            >
+              <User className="w-3.5 h-3.5 text-brand-600" />
+              <span>{profile?.fullName || 'Perfil Operacional'}</span>
+              <span className="text-[10px] bg-brand-50 text-brand-700 px-1.5 py-0.2 rounded font-bold border border-brand-200">
+                {roleLabel}
+              </span>
+            </button>
+          </div>
+        </header>
+
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
           <Outlet />
         </main>

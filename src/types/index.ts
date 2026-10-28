@@ -201,34 +201,131 @@ export interface Incident {
   resolvedAt?: string;
 }
 
-// 13. Alertas de Serviço Público
-export type ServiceAlertType = 'delay' | 'detour' | 'maintenance' | 'interruption' | 'weather' | 'general';
+// 13. Alertas de Serviço Público e Operacionais
+export type ServiceAlertType =
+  | 'delay' // Atrasos
+  | 'detour' // Desvios
+  | 'line_interruption' // Interrupção de linha
+  | 'schedule_change' // Mudança de horário
+  | 'stop_change' // Alteração de ponto
+  | 'vehicle_out_of_service' // Veículo fora de operação
+  | 'emergency' // Situações emergenciais
+  // Suporte retrocompatível
+  | 'maintenance'
+  | 'interruption'
+  | 'weather'
+  | 'general';
+
+export type ServiceAlertStatus = 'active' | 'scheduled' | 'expired' | 'cancelled';
 
 export interface ServiceAlert {
   id: string;
   lineId?: string;
+  lineCode?: string;
   cityId?: string;
+  cityName?: string;
   title: string;
   description: string;
   startsAt: string;
   endsAt?: string;
   alertType: ServiceAlertType;
-  status: 'active' | 'expired' | 'cancelled';
+  responsibleName?: string;
+  responsibleUserId?: string;
+  status: ServiceAlertStatus;
+  channels?: NotificationChannel[];
   createdAt: string;
+  updatedAt?: string;
 }
 
-// 14. Notificações do Sistema
-export type NotificationType = 'system' | 'line_alert' | 'trip_update' | 'driver_alert' | 'safety' | 'operational';
+// 14. Notificações do Sistema e Multicanal
+export type NotificationAudience = 'passenger' | 'driver' | 'fiscal' | 'operator' | 'all';
+
+export type NotificationType =
+  | 'system'
+  | 'line_alert'
+  | 'trip_update'
+  | 'driver_alert'
+  | 'safety'
+  | 'operational'
+  | 'delay'
+  | 'detour'
+  | 'emergency'
+  | 'schedule_change'
+  | 'stop_change';
 
 export interface SystemNotification {
   id: string;
-  userId: string;
+  userId?: string;
+  targetRole: NotificationAudience;
   title: string;
   message: string;
   type: NotificationType;
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
   isRead: boolean;
+  alertId?: string;
+  lineId?: string;
+  lineCode?: string;
   metadata?: Record<string, unknown>;
   createdAt: string;
+  readAt?: string;
+}
+
+// 14.1 Arquitetura de Canais de Notificação e Integrações Externas
+export type NotificationChannel = 'push' | 'web_push' | 'email' | 'whatsapp';
+
+export type DeliveryLogStatus =
+  | 'delivered'
+  | 'pending'
+  | 'failed'
+  | 'skipped_preference'
+  | 'blocked_unconfigured';
+
+export interface NotificationDeliveryLog {
+  id: string;
+  notificationId?: string;
+  alertId?: string;
+  channel: NotificationChannel;
+  recipient: string;
+  audience: NotificationAudience;
+  title: string;
+  status: DeliveryLogStatus;
+  statusReason: string;
+  idempotencyKey: string;
+  sentAt: string;
+  payloadSummary?: string;
+  attempts?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UserNotificationPreference {
+  userId: string;
+  userRole: NotificationAudience;
+  pushEnabled: boolean;
+  webPushEnabled: boolean;
+  emailEnabled: boolean;
+  whatsappEnabled: boolean;
+  operationalAlerts: boolean;
+  lineAlerts: boolean;
+  emergencyAlerts: boolean;
+  delaysAlerts: boolean;
+  scheduleAlerts: boolean;
+  updatedAt: string;
+}
+
+export interface ChannelConfigStatus {
+  channel: NotificationChannel;
+  name: string;
+  isConfigured: boolean;
+  isAuthorized: boolean;
+  providerName: string;
+  statusDescription: string;
+  requiredEnvVars: string[];
+  setupGuide: {
+    title: string;
+    description: string;
+    steps: string[];
+    documentationUrl?: string;
+  };
 }
 
 // 15. Auditoria Operacional

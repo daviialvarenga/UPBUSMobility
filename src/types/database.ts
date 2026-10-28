@@ -26,8 +26,30 @@ export type IncidentType =
   | 'fare_evasion'
   | 'other';
 export type IncidentStatus = 'open' | 'under_investigation' | 'resolved' | 'closed' | 'dismissed';
-export type ServiceAlertType = 'delay' | 'detour' | 'maintenance' | 'interruption' | 'weather' | 'general';
-export type NotificationType = 'system' | 'line_alert' | 'trip_update' | 'driver_alert' | 'safety' | 'operational';
+export type ServiceAlertType =
+  | 'delay'
+  | 'detour'
+  | 'line_interruption'
+  | 'schedule_change'
+  | 'stop_change'
+  | 'vehicle_out_of_service'
+  | 'emergency'
+  | 'maintenance'
+  | 'interruption'
+  | 'weather'
+  | 'general';
+export type NotificationType =
+  | 'system'
+  | 'line_alert'
+  | 'trip_update'
+  | 'driver_alert'
+  | 'safety'
+  | 'operational'
+  | 'delay'
+  | 'detour'
+  | 'emergency'
+  | 'schedule_change'
+  | 'stop_change';
 export type DirectionType = 'outbound' | 'inbound' | 'circular';
 
 export interface Database {
@@ -556,7 +578,10 @@ export interface Database {
           starts_at: string;
           ends_at: string | null;
           alert_type: ServiceAlertType;
-          status: 'active' | 'expired' | 'cancelled';
+          responsible_name: string | null;
+          responsible_user_id: string | null;
+          status: 'active' | 'scheduled' | 'expired' | 'cancelled';
+          channels: Json | null;
           created_at: string;
           updated_at: string;
         };
@@ -569,7 +594,10 @@ export interface Database {
           starts_at?: string;
           ends_at?: string | null;
           alert_type: ServiceAlertType;
-          status?: 'active' | 'expired' | 'cancelled';
+          responsible_name?: string | null;
+          responsible_user_id?: string | null;
+          status?: 'active' | 'scheduled' | 'expired' | 'cancelled';
+          channels?: Json | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -582,8 +610,107 @@ export interface Database {
           starts_at?: string;
           ends_at?: string | null;
           alert_type?: ServiceAlertType;
-          status?: 'active' | 'expired' | 'cancelled';
+          responsible_name?: string | null;
+          responsible_user_id?: string | null;
+          status?: 'active' | 'scheduled' | 'expired' | 'cancelled';
+          channels?: Json | null;
           created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      notification_delivery_logs: {
+        Row: {
+          id: string;
+          notification_id: string | null;
+          alert_id: string | null;
+          channel: string;
+          recipient: string;
+          audience: string;
+          title: string;
+          status: string;
+          status_reason: string;
+          idempotency_key: string;
+          payload_summary: string | null;
+          attempts: number;
+          metadata: Json;
+          sent_at: string;
+        };
+        Insert: {
+          id?: string;
+          notification_id?: string | null;
+          alert_id?: string | null;
+          channel: string;
+          recipient: string;
+          audience: string;
+          title: string;
+          status: string;
+          status_reason: string;
+          idempotency_key: string;
+          payload_summary?: string | null;
+          attempts?: number;
+          metadata?: Json;
+          sent_at?: string;
+        };
+        Update: {
+          id?: string;
+          notification_id?: string | null;
+          alert_id?: string | null;
+          channel?: string;
+          recipient?: string;
+          audience?: string;
+          title?: string;
+          status?: string;
+          status_reason?: string;
+          idempotency_key?: string;
+          payload_summary?: string | null;
+          attempts?: number;
+          metadata?: Json;
+          sent_at?: string;
+        };
+        Relationships: [];
+      };
+      user_notification_preferences: {
+        Row: {
+          id: string;
+          user_id: string;
+          push_enabled: boolean;
+          web_push_enabled: boolean;
+          email_enabled: boolean;
+          whatsapp_enabled: boolean;
+          operational_alerts: boolean;
+          line_alerts: boolean;
+          emergency_alerts: boolean;
+          delays_alerts: boolean;
+          schedule_alerts: boolean;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          push_enabled?: boolean;
+          web_push_enabled?: boolean;
+          email_enabled?: boolean;
+          whatsapp_enabled?: boolean;
+          operational_alerts?: boolean;
+          line_alerts?: boolean;
+          emergency_alerts?: boolean;
+          delays_alerts?: boolean;
+          schedule_alerts?: boolean;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          push_enabled?: boolean;
+          web_push_enabled?: boolean;
+          email_enabled?: boolean;
+          whatsapp_enabled?: boolean;
+          operational_alerts?: boolean;
+          line_alerts?: boolean;
+          emergency_alerts?: boolean;
+          delays_alerts?: boolean;
+          schedule_alerts?: boolean;
           updated_at?: string;
         };
         Relationships: [];
